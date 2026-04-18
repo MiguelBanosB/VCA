@@ -17,9 +17,9 @@ from transforms       import transform_base
 from evaluate_model   import evaluate_model
 
 # ── Rutas — ajusta si es necesario ───────────────────────────────────────────
-IMAGE_PATH = os.path.join('..', 'P1-Material', 'images')
-SHIP_CSV   = os.path.join('..', 'P1-Material', 'ship.csv')
-DOCKED_CSV = os.path.join('..', 'P1-Material', 'docked.csv')
+IMAGE_PATH = os.path.join('P1-Material', 'images')
+SHIP_CSV   = os.path.join('P1-Material', 'ship.csv')
+DOCKED_CSV = os.path.join('P1-Material', 'docked.csv')
 
 # ── Configuración de experimentos ─────────────────────────────────────────────
 # Cada entrada: (nombre_display, arquitectura, pth_con_overlay, pth_sin_overlay)
@@ -28,20 +28,20 @@ EXPERIMENTS = {
         'task':   'ship',
         'labels': ('No-Ship', 'Ship'),
         'models': {
-            'A': ('BaseCNN sin augmentation',  'base',       'model_A.pth',       'model_A_without_ov.pth'),
-            'B': ('BaseCNN con augmentation',  'base',       'model_B.pth',       'model_B_without_ov.pth'),
-            'C': ('ResNet18 sin augmentation', 'pretrained', 'model_C.pth',       'model_C_without_ov.pth'),
-            'D': ('ResNet18 con augmentation', 'pretrained', 'model_D.pth',       'model_D_without_ov.pth'),
+            'A': ('BaseCNN sin augmentation',  'base',       'models/ship_models/model_A.pth',       'models/ship_models/model_A_without_ov.pth'),
+            'B': ('BaseCNN con augmentation',  'base',       'models/ship_models/model_B.pth',       'models/ship_models/model_B_without_ov.pth'),
+            'C': ('ResNet18 sin augmentation', 'pretrained', 'models/ship_models/model_C.pth',       'models/ship_models/model_C_without_ov.pth'),
+            'D': ('ResNet18 con augmentation', 'pretrained', 'models/ship_models/model_D.pth',       'models/ship_models/model_D_without_ov.pth'),
         }
     },
     'docked': {
         'task':   'docked',
         'labels': ('Undocked', 'Docked'),
         'models': {
-            'A': ('BaseCNN sin augmentation',  'base',       'model_A_docked.pth',       'model_A_docked_without_ov.pth'),
-            'B': ('BaseCNN con augmentation',  'base',       'model_B_docked.pth',       'model_B_docked_without_ov.pth'),
-            'C': ('ResNet18 sin augmentation', 'pretrained', 'model_C_docked.pth',       'model_C_docked_without_ov.pth'),
-            'D': ('ResNet18 con augmentation', 'pretrained', 'model_D_docked.pth',       'model_D_docked_without_ov.pth'),
+            'A': ('BaseCNN sin augmentation',  'base',       'models/docked_models/model_A_docked.pth',       'models/docked_models/model_A_docked_without_ov.pth'),
+            'B': ('BaseCNN con augmentation',  'base',       'models/docked_models/model_B_docked.pth',       'models/docked_models/model_B_docked_without_ov.pth'),
+            'C': ('ResNet18 sin augmentation', 'pretrained', 'models/docked_models/model_C_docked.pth',       'models/docked_models/model_C_docked_without_ov.pth'),
+            'D': ('ResNet18 con augmentation', 'pretrained', 'models/docked_models/model_D_docked.pth',       'models/docked_models/model_D_docked_without_ov.pth'),
         }
     }
 }
@@ -50,7 +50,7 @@ EXPERIMENTS = {
 
 
 def pth_path(filename):
-    return os.path.join('..', filename)
+    return filename
 
 
 def build_model(arch, pth, device):
