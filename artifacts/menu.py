@@ -16,12 +16,12 @@ from build_pretrained import build_pretrained
 from transforms       import transform_base
 from evaluate_model   import evaluate_model
 
-# ── Rutas — ajusta si es necesario ───────────────────────────────────────────
+# Rutas
 IMAGE_PATH = os.path.join('P1-Material', 'images')
 SHIP_CSV   = os.path.join('P1-Material', 'ship.csv')
 DOCKED_CSV = os.path.join('P1-Material', 'docked.csv')
 
-# ── Configuración de experimentos ─────────────────────────────────────────────
+# Configuración de experimentos 
 # Cada entrada: (nombre_display, arquitectura, pth_con_overlay, pth_sin_overlay)
 EXPERIMENTS = {
     'ship': {
@@ -45,9 +45,6 @@ EXPERIMENTS = {
         }
     }
 }
-
-# ─────────────────────────────────────────────────────────────────────────────
-
 
 def pth_path(filename):
     return filename
@@ -92,9 +89,9 @@ def menu_model(task_cfg):
         ok_nov = "OK" if os.path.isfile(pth_path(pth_no_ov)) else "NO ENCONTRADO"
         print(f"  [{key}] {name}  [con OV: {ok_ov} | sin OV: {ok_nov}]")
     print("  [T] Todos los modelos")
-    print("  [B] Volver")
+    print("  [V] Volver")
     print_separator()
-    return ask("Elige modelo: ", list(task_cfg['models'].keys()) + ['T', 'B'])
+    return ask("Elige modelo: ", list(task_cfg['models'].keys()) + ['T', 'V'])
 
 
 def menu_overlay():
@@ -103,9 +100,9 @@ def menu_overlay():
     print_separator()
     print("  [1] Con overlay")
     print("  [2] Sin overlay")
-    print("  [B] Volver")
+    print("  [V] Volver")
     print_separator()
-    return ask("Elige dataset: ", ['1', '2', 'B'])
+    return ask("Elige dataset: ", ['1', '2', 'V'])
 
 
 def run_experiment(task_cfg, model_key, overlay, df, device):
