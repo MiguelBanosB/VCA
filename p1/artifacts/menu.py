@@ -17,9 +17,9 @@ from transforms       import transform_base
 from evaluate_model   import evaluate_model
 
 # Rutas
-IMAGE_PATH = os.path.join('P1-Material', 'images')
-SHIP_CSV   = os.path.join('P1-Material', 'ship.csv')
-DOCKED_CSV = os.path.join('P1-Material', 'docked.csv')
+IMAGE_PATH = os.path.join('P1-test-images', 'images')
+SHIP_CSV   = os.path.join('P1-test-images', 'ship.csv')
+DOCKED_CSV = os.path.join('P1-test-images', 'docked.csv')
 
 # Configuración de experimentos 
 # Cada entrada: (nombre_display, arquitectura, pth_con_overlay, pth_sin_overlay)
