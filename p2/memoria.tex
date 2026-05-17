@@ -1,0 +1,427 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{geometry}
+\usepackage{parskip}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+% -------------------------------------------------------
+\title{
+    \vspace{2cm}
+    {\Large Práctica 2}\\[0.5em]
+    {\LARGE Segmentación de Fluido Patológico en Imágenes OCT}\\[1em]
+    {\large Visión por Computador Aplicada}
+}
+\author{
+    Autor: Miguel Baños Baladrón\\
+    Autor: Fiz Garrido Escudero
+}
+\date{Mayo de 2026}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+% -------------------------------------------------------
+\section{Introducción}
+
+La Tomografía de Coherencia Óptica (OCT) es una técnica de imagen no invasiva que obtiene secciones transversales de alta resolución de la retina. La presencia de fluido patológico en estas imágenes es indicativa de diversas enfermedades oculares. El fluido aparece como zonas oscuras redondeadas dentro del tejido retiniano: la luz atraviesa el líquido sin reflejarse, produciendo regiones hiporreflectivas (oscuras). Las máscaras de segmentación marcan estas regiones en blanco sobre negro.
+
+Esta práctica aborda la segmentación automática de ese fluido mediante una red neuronal convolucional. Se parte de una arquitectura UNet como \textit{baseline} y se proponen cuatro mejoras progresivas, cada una motivada por el análisis exploratorio del dataset o por limitaciones observadas en los experimentos anteriores.
+
+El problema presenta dos retos principales. El primero es el \textbf{desbalanceo severo de clases}: el fluido ocupa entre el 0.1\% y el 4.4\% de los píxeles totales, con una media del 1.5\%. El segundo es la \textbf{escasez de datos}: el dataset cuenta con 50 imágenes, de las cuales solo 35 se destinan a entrenamiento. Ambos retos condicionan las decisiones de diseño que se describen a lo largo de este informe.
+
+% -------------------------------------------------------
+\section{Análisis del dataset}
+
+\subsection{Descripción}
+
+El dataset contiene 50 imágenes OCT en escala de grises con sus máscaras binarias correspondientes. Las imágenes son panorámicas de la retina en sección transversal, redimensionadas a $416 \times 624$ píxeles. El split es fijo con semilla para garantizar reproducibilidad: \textbf{35 train / 5 val / 10 test}.
+
+La variabilidad clínica es notable: desde casos con quistes múltiples pequeños hasta acumulaciones masivas de fluido, pasando por casos casi asintomáticos con una fracción de fluido inferior al 0.2\%.
+
+\subsection{Variables estadísticas}
+
+Se calculan cuatro variables por imagen para justificar las decisiones de diseño posteriores:
+
+\begin{itemize}
+    \item \textbf{Brillo} ($\mu_I$): media de intensidad de píxeles. Junto con el contraste, deriva los parámetros de \texttt{ColorJitter} para el \textit{data augmentation}.
+    \item \textbf{Contraste} ($\sigma_I$): desviación estándar global de intensidad.
+    \item \textbf{Rango dinámico}: diferencia entre el percentil 95 y el percentil 5, robusto al fondo negro. Justifica el uso de CLAHE.
+    \item \textbf{fluid\_ratio}: porcentaje de píxeles blancos en la máscara. Cuantifica el desbalanceo real de clases y justifica el uso de Dice Loss.
+\end{itemize}
+
+Los estadísticos del dataset se recogen en el Cuadro~\ref{tab:stats}.
+
+\begin{table}[H]
+\centering
+\caption{Estadísticos del dataset (imágenes originales).}
+\label{tab:stats}
+\begin{tabular}{lrrrr}
+\toprule
+ & Brillo & Contraste & Rango din. & Fluido (\%) \\
+\midrule
+Media  & 42.96 & 50.24 & 148.56 & 1.54 \\
+Std    &  9.29 &  6.81 &  21.29 & 1.06 \\
+Mín    & 23.04 & 31.32 &  87.00 & 0.11 \\
+Máx    & 69.94 & 59.14 & 184.00 & 4.37 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Derivación de parámetros de augmentation}
+
+Los factores de \texttt{ColorJitter} se derivan directamente de la variabilidad estadística del dataset, siguiendo el criterio de coeficiente de variación:
+
+\begin{equation}
+    \text{brightness\_factor} = \frac{\sigma_{\mu_I}}{\mu_{\mu_I}} \approx 0.22
+    \qquad
+    \text{contrast\_factor} = \frac{\sigma_{\sigma_I}}{\mu_{\sigma_I}} \approx 0.14
+\end{equation}
+
+Este criterio garantiza que la magnitud del \textit{augmentation} fotométrico es proporcional a la variabilidad real observada entre escáneres, en lugar de fijarse de forma arbitraria.
+
+\subsection{Justificación de decisiones de diseño}
+
+\begin{itemize}
+    \item El \textbf{rango dinámico bajo} (mín. 87, media 148) indica que varias imágenes tienen contraste insuficiente para distinguir el fluido del tejido circundante. Esto justifica el uso de CLAHE.
+    \item El \textbf{desbalanceo severo} (media 1.54\%, mín. 0.11\%) implica que la \textit{accuracy} es una métrica engañosa: un modelo que prediga todo negro alcanzaría el 98.5\% de \textit{accuracy} sin detectar ningún fluido. Las métricas prioritarias son IoU y Dice.
+    \item La \textbf{escasez de datos} (35 imágenes de entrenamiento) justifica el \textit{data augmentation} y el uso de un encoder preentrenado en los experimentos avanzados.
+\end{itemize}
+
+% -------------------------------------------------------
+\section{Arquitectura base: UNet}
+
+Se utiliza la arquitectura UNet, un encoder-decoder completamente convolucional con \textit{skip connections}. El encoder reduce la resolución espacial en cuatro niveles (64, 128, 256, 512 canales) mediante bloques de doble convolución $3\times3$ con ReLU y MaxPool. El decoder recupera la resolución espacial con \textit{upsample} bilineal, concatenando en cada nivel el \textit{skip connection} correspondiente del encoder para preservar los detalles finos necesarios para trazar los bordes del fluido.
+
+La arquitectura es \textbf{fully convolutional}: no contiene capas lineales en ningún punto, lo que permite que la salida tenga la misma resolución espacial que la entrada y produzca una máscara píxel a píxel. La salida son logits crudos de un canal, que se binariza mediante sigmoid con umbral 0.5 para obtener la máscara de segmentación.
+
+% -------------------------------------------------------
+\section{Preprocesado}
+
+\subsection{Normalización de brillo}
+
+Tras aplicar CLAHE (descrito en el experimento correspondiente), cada imagen se normaliza con la media y desviación estándar calculadas exclusivamente sobre las imágenes de entrenamiento post-CLAHE:
+
+\begin{equation}
+    \hat{I} = \frac{I/255 - \mu_{\text{train}}}{\sigma_{\text{train}}}
+\end{equation}
+
+Los valores $\mu_{\text{train}}$ y $\sigma_{\text{train}}$ se calculan solo sobre el conjunto de entrenamiento para evitar fuga de información del conjunto de test o validación.
+
+\subsection{Dataset sincronizado}
+
+Las transformaciones geométricas aleatorias deben aplicarse de forma idéntica a imagen y máscara para mantener la correspondencia espacial. Se implementa mediante semilla sincronizada: antes de cada transformación se fija la misma semilla aleatoria para ambas. \texttt{ColorJitter} se aplica fuera de este mecanismo, únicamente sobre la imagen y nunca sobre la máscara.
+
+% -------------------------------------------------------
+\section{Entrenamiento y evaluación}
+
+Todos los experimentos comparten la misma configuración base:
+
+\begin{itemize}
+    \item Optimizador: Adam, $lr = 10^{-3}$ (excepto Exp 4: $10^{-4}$)
+    \item \textit{Scheduler}: \texttt{ReduceLROnPlateau} (patience=10, factor=0.5)
+    \item \textit{Early stopping} basado en \textit{val loss}
+    \item Máximo 100 épocas
+    \item Split fijo: 35 train / 5 val / 10 test
+\end{itemize}
+
+\subsection{Métricas de evaluación}
+
+Dado el desbalanceo severo, la \textit{accuracy} no es una métrica fiable. Las métricas prioritarias son IoU y Dice:
+
+\begin{equation}
+    \text{IoU} = \frac{TP}{TP + FP + FN}
+    \qquad
+    \text{Dice} = \frac{2 \cdot TP}{2 \cdot TP + FP + FN}
+\end{equation}
+
+Ambas métricas ignoran los verdaderos negativos (TN), por lo que no se ven infladas por la clase mayoritaria. Se reportan también Precision, Recall y Accuracy como información complementaria.
+
+% -------------------------------------------------------
+\section{Baseline}
+
+\subsection{Configuración}
+
+UNet desde cero con \texttt{BCEWithLogitsLoss}, sin preprocesado adicional ni \textit{augmentation}.
+
+\subsection{Problema del desbalanceo con BCE}
+
+\texttt{BCEWithLogitsLoss} trata todos los píxeles por igual. Con un 1.5\% de píxeles de fluido, la red dispone de un camino de mínima resistencia: predecir todo a cero. En este caso acierta el 98.5\% de los píxeles y la \textit{loss} baja sin haber aprendido nada útil. Esto se confirma en las curvas de entrenamiento: las primeras 40 épocas presentan IoU=0 y Dice=0, con la red prediciendo todo negro. A partir de la época 50 comienza a detectar fluido, pero la convergencia es lenta y la solución encontrada es subóptima.
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Baseline.}
+\label{tab:baseline}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       & 0.6134 \\
+Dice      & 0.7603 \\
+Precision & 0.7931 \\
+Recall    & 0.7302 \\
+Accuracy  & 0.9952 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Experimento 1: Dice Loss}
+
+\subsection{Motivación}
+
+La Dice Loss optimiza directamente el coeficiente Dice, que es invariante al desbalanceo de clases por construcción: los verdaderos negativos no aparecen en ningún término, por lo que predecir todo a cero produce una \textit{loss} de 1.0, el peor resultado posible. Teóricamente es la función de pérdida ideal para este problema.
+
+\subsection{Problema práctico: gradientes degenerados}
+
+A pesar de sus ventajas teóricas, la \textit{soft} Dice Loss presenta un problema crítico con desbalanceo severo. Si la red inicializa con logits positivos altos, el sigmoid satura cerca de 1 para todos los píxeles y la red entra en un estado degenerado (predecir todo como fluido):
+
+\begin{equation}
+    \mathcal{L}_{\text{Dice}} \approx 1 - \frac{2 N_{\text{fluido}}}{N_{\text{total}} + N_{\text{fluido}}} \approx 0.97
+\end{equation}
+
+El gradiente en este estado es prácticamente cero porque el denominador crece con el cuadrado del número de píxeles (del orden de $10^{12}$). La red no puede escapar y la \textit{loss} permanece plana durante todo el entrenamiento.
+
+Este comportamiento se confirma experimentalmente: la \textit{loss} se mantiene constante en 0.9685 durante las 100 épocas. Los resultados de test (Recall=1.0, Precision=0.01) confirman que la red predice todo como fluido.
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Exp 1: Dice Loss.}
+\label{tab:exp1}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       & 0.0105 \\
+Dice      & 0.0208 \\
+Precision & 0.0105 \\
+Recall    & 1.0000 \\
+Accuracy  & 0.0105 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Experimento 2: BCE + Dice Loss}
+
+\subsection{Motivación}
+
+La combinación de ambas pérdidas aprovecha las ventajas de cada una. BCE proporciona gradientes bien condicionados en todo momento — el gradiente para un píxel mal clasificado es simplemente $p_i - t_i$, independientemente del número total de píxeles —, evitando que la red quede atrapada en soluciones degeneradas. Dice Loss orienta la optimización hacia la métrica que realmente importa y compensa el desbalanceo.
+
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\text{BCE}} + \mathcal{L}_{\text{Dice}}
+\end{equation}
+
+Esta combinación es el estándar en segmentación médica: BCE estabiliza el entrenamiento y Dice corrige el sesgo hacia la clase mayoritaria.
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Exp 2: BCE + Dice Loss.}
+\label{tab:exp2}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       &  \\
+Dice      &  \\
+Precision &  \\
+Recall    &  \\
+Accuracy  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Experimento 3: Preprocesado CLAHE}
+
+\subsection{Motivación}
+
+CLAHE (Contrast Limited Adaptive Histogram Equalization) es el estándar en preprocesado de imágenes OCT. A diferencia de la ecualización global, CLAHE divide la imagen en bloques ($8 \times 8$ píxeles) y ecualiza el histograma de cada bloque por separado. El parámetro \texttt{clipLimit} limita la amplificación máxima en cada bloque, evitando que zonas uniformes amplifiquen el ruido.
+
+El fluido aparece como zonas oscuras localizadas. Al ecualizar por bloques, el histograma local de un bloque que contenga fluido es bimodal (píxeles oscuros del fluido más píxeles brillantes del tejido circundante), y la ecualización local estira ese histograma aumentando el contraste en los bordes del fluido. Con ecualización global este efecto se pierde porque el tejido brillante del resto de la retina domina el histograma.
+
+El rango dinámico bajo observado en el EDA (mín. 87, media 148) justifica directamente su uso.
+
+\subsection{Selección del clipLimit}
+
+Se evalúan tres valores mediante una métrica de separabilidad entre píxeles de fluido y fondo sobre las 50 imágenes, usando las máscaras ground truth:
+
+\begin{equation}
+    \text{sep} = \frac{|\mu_{\text{fluido}} - \mu_{\text{fondo}}|}{\sigma_{\text{fondo}} + \epsilon}
+\end{equation}
+
+\begin{table}[H]
+\centering
+\caption{Separabilidad fluido/fondo por clipLimit.}
+\label{tab:clahe}
+\begin{tabular}{cc}
+\toprule
+clipLimit & Separabilidad media \\
+\midrule
+1.0 & 0.2963 \\
+2.0 & 0.3632 \\
+4.0 & 0.4536 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se selecciona \texttt{clipLimit=2.0} como balance entre mejora de contraste y amplificación de ruido, valor consistente con las recomendaciones de la literatura para imágenes OCT.
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Exp 3: + CLAHE.}
+\label{tab:exp3}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       &  \\
+Dice      &  \\
+Precision &  \\
+Recall    &  \\
+Accuracy  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Experimento 4: Data Augmentation}
+
+\subsection{Motivación}
+
+Con 35 imágenes de entrenamiento, el modelo sobreajusta sin \textit{augmentation}. Las transformaciones se diseñan respetando las restricciones anatómicas de las imágenes OCT.
+
+\subsection{Transformaciones aplicadas}
+
+\begin{itemize}
+    \item \textbf{RandomHorizontalFlip} ($p=0.5$): la fóvea puede aparecer a izquierda o derecha según el corte. Es anatómicamente válido.
+    \item \textbf{RandomRotation} ($\pm 10°$): simula pequeñas variaciones de posicionamiento del paciente durante la adquisición.
+    \item \textbf{ColorJitter} (brightness=0.22, contrast=0.14): simula variaciones fotométricas entre escáneres OCT distintos. Los factores se derivan del EDA. Se aplica \textbf{solo a la imagen}, nunca a la máscara.
+\end{itemize}
+
+\subsection{Transformaciones descartadas}
+
+\begin{itemize}
+    \item \textbf{Flip vertical}: invertiría la retina anatómicamente, produciendo imágenes clínicamente imposibles.
+    \item \textbf{GaussianBlur}: en OCT la nitidez baja indica mala calidad de adquisición, no variación clínica. Además el fluido tiene bordes sutiles que el blur podría difuminar, perjudicando la detección.
+\end{itemize}
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Exp 4: + Augmentation.}
+\label{tab:exp4}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       &  \\
+Dice      &  \\
+Precision &  \\
+Recall    &  \\
+Accuracy  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Experimento 5: Encoder Preentrenado}
+
+\subsection{Motivación}
+
+Con 35 imágenes de entrenamiento, aprender un encoder desde cero es un handicap significativo. Un encoder preentrenado en ImageNet ya dispone de detectores de bordes, texturas y estructuras jerárquicas que son transferibles a la detección de fluido en OCT, aunque las imágenes médicas difieran de ImageNet.
+
+\subsection{Implementación}
+
+Se utiliza \texttt{segmentation\_models\_pytorch} con ResNet18 como encoder y pesos de ImageNet. ResNet18 se elige por ser el encoder más ligero de la familia ResNet, reduciendo el riesgo de sobreajuste con un dataset pequeño. La arquitectura mantiene la estructura encoder-decoder con \textit{skip connections} de UNet, sustituyendo únicamente el encoder. La primera capa del encoder se adapta automáticamente a imágenes de 1 canal. Se utiliza un \textit{learning rate} menor ($lr=10^{-4}$) para no destruir los pesos preentrenados durante el \textit{fine-tuning}.
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\caption{Resultados en test — Exp 5: ResNet18 preentrenado.}
+\label{tab:exp5}
+\begin{tabular}{lc}
+\toprule
+Métrica & Valor \\
+\midrule
+IoU       &  \\
+Dice      &  \\
+Precision &  \\
+Recall    &  \\
+Accuracy  &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Tabla comparativa}
+
+\begin{table}[H]
+\centering
+\caption{Comparativa de todos los experimentos en test.}
+\label{tab:comparativa}
+\begin{tabular}{llccccc}
+\toprule
+Exp. & Configuración & IoU & Dice & Prec. & Recall & Acc. \\
+\midrule
+Baseline & BCE                        & 0.6134 & 0.7603 & 0.7931 & 0.7302 & 0.9952 \\
+Exp 1    & + Dice Loss                & 0.0105 & 0.0208 & 0.0105 & 1.0000 & 0.0105 \\
+Exp 2    & + BCE + Dice               &        &        &        &        &        \\
+Exp 3    & + CLAHE                    &        &        &        &        &        \\
+Exp 4    & + Augmentation             &        &        &        &        &        \\
+Exp 5    & + ResNet18 preentrenado    &        &        &        &        &        \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Pipeline de inferencia}
+
+Para la defensa de la práctica se ha implementado un \textit{pipeline} de inferencia (\texttt{menu.py}) independiente del cuaderno de entrenamiento, que permite evaluar cualquiera de los modelos entrenados sobre un dataset de test nuevo.
+
+El código se divide en módulos reutilizables: \texttt{UNet.py} (arquitectura), \texttt{OCTDataset.py} (clase \textit{dataset} con CLAHE), \texttt{transforms.py} (parámetros de preprocesado), \texttt{evaluate\_model.py} (cálculo de métricas y visualizaciones) y \texttt{menu.py} (punto de entrada).
+
+El menú guía al usuario para elegir qué modelo evaluar. Cada modelo lleva asociado en el propio código qué preprocesado necesita (CLAHE y/o normalización), por lo que el dataset se construye automáticamente con la configuración correcta para cada experimento. Para usarlo sobre el dataset de defensa basta con colocar las imágenes del profesor en \texttt{OCT-test/images} y las máscaras en \texttt{OCT-test/masks}, manteniendo el mismo formato que el dataset original.
+
+% -------------------------------------------------------
+\section{Conclusiones}
+
+El principal hallazgo metodológico de esta práctica es el comportamiento degenerado de la \textit{soft} Dice Loss con desbalanceo severo. A pesar de ser la función de pérdida teóricamente correcta para este problema, en la práctica la red converge a predecir todo como fluido debido a gradientes prácticamente nulos cuando el sigmoid está saturado. La solución es combinarla con BCE, que proporciona gradientes estables en todo momento y evita que la red quede atrapada en soluciones degeneradas.
+
+El preprocesado CLAHE mejora la separabilidad entre fluido y fondo a nivel de contraste local. La selección del \texttt{clipLimit} se justifica cuantitativamente mediante la métrica de separabilidad calculada sobre las máscaras ground truth, en lugar de fijarlo de forma arbitraria.
+
+El \textit{data augmentation} se diseña respetando las restricciones anatómicas: el flip vertical se descarta por producir imágenes clínicamente inválidas, y los parámetros de \texttt{ColorJitter} se derivan de la variabilidad estadística real del dataset.
+
+El uso de un encoder preentrenado aborda directamente la limitación más importante del problema: con 35 imágenes de entrenamiento, aprender representaciones visuales útiles desde cero es inviable. El preentrenamiento en ImageNet proporciona un punto de partida con detectores de bordes y texturas directamente útiles para la delimitación del fluido.
+
+\end{document}
