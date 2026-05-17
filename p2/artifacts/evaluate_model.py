@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def get_segmentation_masks(outputs, threshold=0.5):
@@ -8,15 +9,41 @@ def get_segmentation_masks(outputs, threshold=0.5):
 
 
 def show_result(orig, gt, prediction, title=None):
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-    images = [orig, gt, prediction, orig * prediction]
-    titles = ['Original', 'Ground Truth', 'Prediccion', 'Overlap']
-    for ax, im, t in zip(axes, images, titles):
-        ax.imshow(im, cmap='gray')
-        ax.set_title(t)
-        ax.axis('off')
+    """
+    Muestra 4 paneles: imagen original, máscara ground truth, predicción de la red
+    y overlay sobre la imagen original donde verde indica detección correcta (TP)
+    y rojo indica error (FP o FN).
+    """
+    fig, axes = plt.subplots(1, 4, figsize=(20, 4))
+    ax = axes.ravel()
+
+    orig_np = orig.numpy() if hasattr(orig, 'numpy') else np.array(orig)
+    gt_np   = (gt.numpy() if hasattr(gt, 'numpy') else np.array(gt)) > 0.5
+    pred_np = (prediction.numpy() if hasattr(prediction, 'numpy') else np.array(prediction)) > 0.5
+
+    ax[0].imshow(orig_np, cmap='gray')
+    ax[0].set_title('Orig')
+    ax[0].axis('off')
+
+    ax[1].imshow(gt_np, cmap='gray')
+    ax[1].set_title('GT')
+    ax[1].axis('off')
+
+    ax[2].imshow(pred_np, cmap='gray')
+    ax[2].set_title('Prediction')
+    ax[2].axis('off')
+
+    overlay = np.stack([orig_np, orig_np, orig_np], axis=-1)
+    overlay[gt_np & pred_np]    = [0.0, 1.0, 0.0]
+    overlay[(~gt_np) & pred_np] = [1.0, 0.0, 0.0]
+    overlay[gt_np & (~pred_np)] = [1.0, 0.0, 0.0]
+
+    ax[3].imshow(overlay)
+    ax[3].set_title('Overlay (verde=TP, rojo=FP/FN)')
+    ax[3].axis('off')
+
     if title is not None:
-        fig.suptitle(title, fontweight='bold')
+        fig.suptitle(title)
     plt.tight_layout()
     plt.show()
 
