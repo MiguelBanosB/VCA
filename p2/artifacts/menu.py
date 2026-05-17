@@ -37,8 +37,8 @@ EXPERIMENTS = {
     'B': ('Exp 1   — Dice Loss',               'unet', 'exp1_dice.pth',     False),
     'C': ('Exp 2   — BCE + Dice Loss',         'unet', 'exp2_bce_dice.pth', False),
     'D': ('Exp 3   — BCE + Dice Loss + CLAHE', 'unet', 'exp3_clahe.pth',    True),
-    # Añadir aquí los siguientes experimentos:
-    # 'E': ('Exp 4   — ...', 'unet', 'exp4_....pth', True),
+    'E': ('Exp 4   — Augmentation',         'unet', 'exp3_augmentation.pth', True),
+    'F': ('Exp 5   — ResNet18',         'resnet18', 'exp4_pretrained.pth', True),
 }
 
 
